@@ -2,7 +2,7 @@
 using MathNet.Numerics.IntegralTransforms;
 using MathNet.Numerics.Statistics;
 
-namespace DataRelated;
+namespace AudioDenoise.Models;
 
 /// <summary>
 /// Простейшая noise-reduction модель на основе FFT + пороговой маски по мощности (spectral gating).

@@ -1,29 +1,28 @@
-﻿namespace DataRelated.Data;
-using Microsoft.ML.Data;
+﻿using Microsoft.ML.Data;
+
+namespace AudioDenoise.Data;
 
 public class AudioData
 {
     [LoadColumn(0)]
-    public string ID { get; set; }
+    public string Id { get; set; } = string.Empty;
 
     [LoadColumn(1)]
-    public string Filename { get; set; }
+    public string FileName { get; set; } = string.Empty;
 
+    // Если вы заранее знаете порядок колонок в CSV, добавьте [LoadColumn(index)].
     [LoadColumn(2)]
-    public string Set { get; set; }
+    public string CleanPath { get; set; } = string.Empty;
 
     [LoadColumn(3)]
-    public string Kind { get; set; }
+    public string NoisyPath { get; set; } = string.Empty;
 
     [LoadColumn(4)]
-    public string NoisyFilePath { get; set; }
+    public float CleanDuration { get; set; } = 0f;
 
     [LoadColumn(5)]
-    public string CleanFilePath { get; set; }
+    public float NoisyDuration { get; set; } = 0f;
 
     [LoadColumn(6)]
-    public string NoiseType { get; set; }
-
-    [LoadColumn(7)]
-    public float DurationSeconds { get; set; }
+    public string Kind { get; set; } = string.Empty; // "Train" / "Test"
 }

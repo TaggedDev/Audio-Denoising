@@ -1,4 +1,4 @@
-﻿namespace DataRelated;
+﻿namespace AudioDenoise.Models;
 
 /// <summary>
 /// Интерфейс для noise-reduction моделей.

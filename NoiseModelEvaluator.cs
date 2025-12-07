@@ -1,12 +1,16 @@
-﻿using AudioDenoise.Eval;
-using DataRelated.Data;
-using DataRelated.Utils;
+﻿using AudioDenoise.Data;
+using AudioDenoise.Eval;
+using AudioDenoise.Models;
+using AudioDenoise.Utils;
+using ShellProgressBar;
 
-namespace DataRelated;
+namespace AudioDenoise;
 
 public class NoiseModelEvaluator(IEnumerable<INoiseReductionModel> models, IEnumerable<IMetric> metrics)
 {
-    private readonly List<INoiseReductionModel> _models = models.ToList() ?? throw new ArgumentNullException(nameof(models));
+    private readonly List<INoiseReductionModel> _models =
+        models.ToList() ?? throw new ArgumentNullException(nameof(models));
+
     private readonly List<IMetric> _metrics = metrics.ToList() ?? throw new ArgumentNullException(nameof(metrics));
 
     /// <summary>
@@ -14,7 +18,8 @@ public class NoiseModelEvaluator(IEnumerable<INoiseReductionModel> models, IEnum
     /// noisyData: list of noisy AudioData rows
     /// allData: full dataset to get references (Clean files)
     /// </summary>
-    public Dictionary<string, Dictionary<string, double>> RunTest(List<AudioData> noisyData, List<AudioData> allData,
+    public Dictionary<string, Dictionary<string, double>> RunTest(
+        List<AudioData> noisyData,
         int batchSize = 8)
     {
         var results = new Dictionary<string, Dictionary<string, List<double>>>();
@@ -22,6 +27,19 @@ public class NoiseModelEvaluator(IEnumerable<INoiseReductionModel> models, IEnum
             results[model.Name] = _metrics.ToDictionary(m => m.Name, _ => new List<double>());
 
         int total = noisyData.Count;
+
+        var progressOptions = new ProgressBarOptions
+        {
+            ProgressCharacter = '─',
+            ProgressBarOnBottom = true,
+            ForegroundColor = ConsoleColor.Cyan,
+            BackgroundColor = ConsoleColor.DarkGray,
+            DisplayTimeInRealTime = true,
+            CollapseWhenFinished = false
+        };
+
+        using var pbar = new ProgressBar(total, "Processing audio files…", progressOptions);
+
         for (int start = 0; start < total; start += batchSize)
         {
             int end = Math.Min(start + batchSize, total);
@@ -29,18 +47,14 @@ public class NoiseModelEvaluator(IEnumerable<INoiseReductionModel> models, IEnum
 
             foreach (var audioData in currentBatch)
             {
-                // читаем аудио через AudioUtils
-                float[] noisySignal = AudioUtils.ReadMonoWav(audioData.NoisyFilePath, out int noisySampleRate);
-                
+                // читаем аудио
+                float[] noisySignal = AudioUtils.ReadMonoWav(audioData.NoisyPath, out int noisySampleRate);
+
                 var modelOutputs = new Dictionary<string, float[]>();
                 foreach (INoiseReductionModel model in _models)
                     modelOutputs[model.Name] = model.Process(noisySignal, noisySampleRate);
 
-                // находим соответствующий clean
-                AudioData cleanAudio = allData.First(audio => audio.ID == audioData.ID && audio.Set == "Clean");
-                float[] cleanSignal = AudioUtils.ReadMonoWav(cleanAudio.CleanFilePath, out int cleanSampleRate);
-                if (noisySampleRate != cleanSampleRate) 
-                    throw new InvalidOperationException("Sample rates must match");
+                float[] cleanSignal = AudioUtils.ReadMonoWav(audioData.CleanPath, out _);
 
                 int length = Math.Min(cleanSignal.Length, noisySignal.Length);
                 float[] reference = cleanSignal.Take(length).ToArray();
@@ -55,10 +69,12 @@ public class NoiseModelEvaluator(IEnumerable<INoiseReductionModel> models, IEnum
                         results[model.Name][metric.Name].Add(val);
                     }
                 }
+
+                pbar.Tick($"Processed {audioData.FileName}");
             }
         }
 
-        // усреднение по батчам
+        // усреднение
         var meanResults = new Dictionary<string, Dictionary<string, double>>();
         foreach (var model in _models)
         {
@@ -66,7 +82,8 @@ public class NoiseModelEvaluator(IEnumerable<INoiseReductionModel> models, IEnum
             foreach (var metric in _metrics)
             {
                 List<double> vals = results[model.Name][metric.Name];
-                meanResults[model.Name][metric.Name] = vals.Count == 0 ? double.NaN : vals.Average();
+                meanResults[model.Name][metric.Name] =
+                    vals.Count == 0 ? double.NaN : vals.Average();
             }
         }
 

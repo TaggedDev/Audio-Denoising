@@ -17,6 +17,7 @@
       <PackageReference Include="Plotly.NET" Version="5.1.0" />
       <PackageReference Include="Plotly.NET.CSharp" Version="0.13.0" />
       <PackageReference Include="ScottPlot" Version="5.1.57" />
+      <PackageReference Include="shellprogressbar" Version="5.2.0" />
     </ItemGroup>
 
 </Project>
