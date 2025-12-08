@@ -1,0 +1,31 @@
+FourierModel: 
+All
+	SISDRMetric: 8,5623
+	SNRMetric: 8,5657
+	SegmentalSNR: -0,7046
+	SpectralRMSE: 9,0218								  
+bus		    
+	SISDRMetric: 8,2078
+	SNRMetric: 8,2134
+	SegmentalSNR: -0,9990
+	SpectralRMSE: 9,2299								  
+cafe
+	SISDRMetric: 8,3705
+	SNRMetric: 8,3764
+	SegmentalSNR: -1,1734
+	SpectralRMSE: 8,5550
+living
+	SISDRMetric: 12,1397
+	SNRMetric: 12,1390
+	SegmentalSNR: 2,5981
+	SpectralRMSE: 5,8465
+office
+	SISDRMetric: 8,4132
+	SNRMetric: 8,4168
+	SegmentalSNR: -0,3599
+	SpectralRMSE: 9,6594
+psquare
+	SISDRMetric: 8,4713
+	SNRMetric: 8,4708
+	SegmentalSNR: -1,0066
+	SpectralRMSE: 9,3453
