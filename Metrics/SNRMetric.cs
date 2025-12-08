@@ -1,4 +1,4 @@
-﻿namespace AudioDenoise.Eval;
+﻿namespace AudioDenoise.Metrics;
 
 /// <summary>
 /// Simple global Signal-to-Noise Ratio (SNR)

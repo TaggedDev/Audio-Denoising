@@ -1,4 +1,6 @@
-﻿namespace AudioDenoise.Models;
+﻿using AudioDenoise.Data;
+
+namespace AudioDenoise.Models;
 
 /// <summary>
 /// Интерфейс для noise-reduction моделей.
@@ -18,4 +20,10 @@ public interface INoiseReductionModel
     /// (Опционально) загрузить веса/гиперпараметры модели.
     /// </summary>
     void LoadModel(string modelPath);
+
+    /// <summary>
+    /// Прямой проход для множества элементов из датасета
+    /// </summary>
+    /// <param name="sample">Данные которые надо поочередно прогнать через модель</param>
+    void ProcessAndWriteSample(IEnumerable<AudioData> sample);
 }

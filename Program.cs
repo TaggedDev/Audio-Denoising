@@ -1,5 +1,6 @@
 ﻿using AudioDenoise.Data;
-using AudioDenoise.Eval;
+using AudioDenoise.Metrics;
+using AudioDenoise.Evaluate;
 using AudioDenoise.Models;
 using Microsoft.ML;
 
@@ -42,16 +43,18 @@ internal static class Program
         var evaluator = new NoiseModelEvaluator(models, metrics);
 
         // Запуск с батчами
-        Dictionary<string, Dictionary<string, double>> results = evaluator.RunTest(audioData, batchSize: 16);
+        List<ModelTestResult> results = evaluator
+            .RunTest(audioData, batchSize: 16)
+            .OrderBy(x => x.ModelName)
+            .ThenBy(x => x.NoiseType)
+            .ToList();
 
         // Печать результатов
-        foreach (var modelName in results.Keys)
-        {
-            Console.WriteLine($"Model: {modelName}");
-            foreach (var metricName in results[modelName].Keys)
-            {
-                Console.WriteLine($"{metricName}: {results[modelName][metricName]:F2}");
-            }
-        }
+        foreach (ModelTestResult modelTestResult in results) 
+            Console.WriteLine(modelTestResult);
+        
+        IEnumerable<AudioData> sample = audioData.Take(5);
+        foreach (INoiseReductionModel model in models) 
+            model.ProcessAndWriteSample(sample);
     }
 }

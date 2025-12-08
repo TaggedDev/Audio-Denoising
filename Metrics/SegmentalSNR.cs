@@ -1,4 +1,4 @@
-﻿using AudioDenoise.Eval;
+﻿using AudioDenoise.Metrics;
 
 public class SegmentalSNR : IMetric
 {

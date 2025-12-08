@@ -1,10 +1,10 @@
 ﻿using AudioDenoise.Data;
-using AudioDenoise.Eval;
+using AudioDenoise.Metrics;
 using AudioDenoise.Models;
 using AudioDenoise.Utils;
 using ShellProgressBar;
 
-namespace AudioDenoise;
+namespace AudioDenoise.Evaluate;
 
 public class NoiseModelEvaluator(IEnumerable<INoiseReductionModel> models, IEnumerable<IMetric> metrics)
 {
@@ -18,14 +18,10 @@ public class NoiseModelEvaluator(IEnumerable<INoiseReductionModel> models, IEnum
     /// noisyData: list of noisy AudioData rows
     /// allData: full dataset to get references (Clean files)
     /// </summary>
-    public Dictionary<string, Dictionary<string, double>> RunTest(
-        List<AudioData> noisyData,
-        int batchSize = 8)
+    public List<ModelTestResult> RunTest(List<AudioData> noisyData, int batchSize = 8)
     {
-        var results = new Dictionary<string, Dictionary<string, List<double>>>();
-        foreach (var model in _models)
-            results[model.Name] = _metrics.ToDictionary(m => m.Name, _ => new List<double>());
-
+        List<ModelTestResult> results = [];
+        
         int total = noisyData.Count;
 
         var progressOptions = new ProgressBarOptions
@@ -58,35 +54,59 @@ public class NoiseModelEvaluator(IEnumerable<INoiseReductionModel> models, IEnum
 
                 int length = Math.Min(cleanSignal.Length, noisySignal.Length);
                 float[] reference = cleanSignal.Take(length).ToArray();
-
+                
                 foreach (var model in _models)
                 {
                     float[] denoised = modelOutputs[model.Name].Take(length).ToArray();
 
-                    foreach (var metric in _metrics)
+                    results.Add(new ModelTestResult
                     {
-                        double val = metric.Compute(reference, denoised, noisySampleRate);
-                        results[model.Name][metric.Name].Add(val);
-                    }
+                        ModelName = model.Name,
+                        NoiseType = audioData.NoiseType,
+                        Metrics = _metrics.ToDictionary(
+                            x => x,
+                            x => x.Compute(reference, denoised, noisySampleRate))
+                    });
                 }
 
-                pbar.Tick($"Processed {audioData.FileName}");
+                pbar.Tick($"Processed {audioData.FileName} [{audioData.NoiseType}]");
             }
         }
 
-        // усреднение
-        var meanResults = new Dictionary<string, Dictionary<string, double>>();
-        foreach (var model in _models)
-        {
-            meanResults[model.Name] = new Dictionary<string, double>();
-            foreach (var metric in _metrics)
+        List<ModelTestResult> aggregatedResults = [];
+
+        var modelNoiseGroups = results
+            .GroupBy(r => new { r.ModelName, r.NoiseType })
+            .Select(g => new ModelTestResult()
             {
-                List<double> vals = results[model.Name][metric.Name];
-                meanResults[model.Name][metric.Name] =
-                    vals.Count == 0 ? double.NaN : vals.Average();
-            }
-        }
-
-        return meanResults;
+                ModelName = g.Key.ModelName,
+                NoiseType = g.Key.NoiseType,
+                Metrics = g.SelectMany(r => r.Metrics)
+                    .GroupBy(m => m.Key)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.Average(m => m.Value)
+                    )
+            });
+        
+        aggregatedResults.AddRange(modelNoiseGroups);
+    
+        // 2. Для каждой модели по всем типам шума (общий результат по модели)
+        var modelGroups = results
+            .GroupBy(r => r.ModelName)
+            .Select(g => new ModelTestResult
+            {
+                ModelName = g.Key, 
+                NoiseType = "All",
+                Metrics = g.SelectMany(r => r.Metrics)
+                    .GroupBy(m => m.Key)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.Average(m => m.Value)
+                    )
+            });
+    
+        aggregatedResults.AddRange(modelGroups);
+        return aggregatedResults;
     }
 }

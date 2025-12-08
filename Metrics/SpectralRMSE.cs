@@ -1,6 +1,6 @@
 ﻿using MathNet.Numerics.IntegralTransforms;
 
-namespace AudioDenoise.Eval;
+namespace AudioDenoise.Metrics;
 
 public class SpectralRMSE : IMetric
 {

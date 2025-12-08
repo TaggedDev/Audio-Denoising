@@ -2,9 +2,10 @@
 using NAudio.Wave.SampleProviders;
 
 namespace AudioDenoise.Utils;
+
 public static class AudioUtils
 {
-public static float[] ReadMonoWav(string rawPath, out int sampleRate)
+    public static float[] ReadMonoWav(string rawPath, out int sampleRate)
     {
         if (string.IsNullOrWhiteSpace(rawPath))
             throw new ArgumentException("Пустой путь к аудиофайлу.", nameof(rawPath));
@@ -66,5 +67,18 @@ public static float[] ReadMonoWav(string rawPath, out int sampleRate)
         }
 
         return samples.ToArray();
+    }
+    
+    public static void SaveAudioFile(string filePath, float[] signal, int sampleRate)
+    {
+        using var writer = new WaveFileWriter(filePath,
+            new WaveFormat(sampleRate, 16, 1));
+
+        foreach (var sampleVal in signal)
+        {
+            short pcm16 = (short)(Math.Max(-1.0f, Math.Min(1.0f, sampleVal)) * short.MaxValue);
+            writer.WriteByte((byte)(pcm16 & 0xFF));
+            writer.WriteByte((byte)((pcm16 >> 8) & 0xFF));
+        }
     }
 }

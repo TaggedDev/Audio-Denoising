@@ -1,4 +1,4 @@
-﻿namespace AudioDenoise.Eval;
+﻿namespace AudioDenoise.Metrics;
 
 /// <summary>
 /// Scale-Invariant Signal-to-Distortion Ratio (SI-SDR)

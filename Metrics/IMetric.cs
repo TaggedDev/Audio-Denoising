@@ -1,4 +1,4 @@
-﻿namespace AudioDenoise.Eval;
+﻿namespace AudioDenoise.Metrics;
 
 public interface IMetric
 {
