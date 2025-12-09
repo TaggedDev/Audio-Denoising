@@ -2,7 +2,10 @@
 using AudioDenoise.Metrics;
 using AudioDenoise.Evaluate;
 using AudioDenoise.Models;
+using AudioDenoise.Trainer;
+using AudioDenoise.Utils;
 using Microsoft.ML;
+using TorchSharp;
 
 namespace AudioDenoise;
 
@@ -10,10 +13,53 @@ internal static class Program
 {
     private static void Main()
     {
+        const string csvPath = "train_audio.csv";
+        const string checkpointDir = "checkpoints_test";
+        
+        MLContext mlContext = new MLContext();
+        IDataView dataView = mlContext.Data.LoadFromTextFile<AudioData>(csvPath, separatorChar: ',', hasHeader: true);
+        List<AudioData> data = mlContext.Data.CreateEnumerable<AudioData>(dataView, reuseRowObject: false).ToList();
+
+        // Take small subset to test batch training
+        List<AudioData> trainSlice = data.Take(16).ToList();
+        
+        torch.Device device = torch.cuda.is_available() ? torch.CUDA : torch.CPU;
+        DCCRNModel model = new DCCRNModel(device);
+        DCCRNTrainer trainer = new DCCRNTrainer(model, device, nFft: 512, winLength: 512, hopLength: 128);
+        
+        Directory.CreateDirectory(checkpointDir);
+        trainer.Train(trainSlice, checkpointDir, epochs: 1, batchSize: 4, lr: 1e-3);
+
+        TestModelLoading(checkpointDir, device, data);
+    }
+
+    private static void TestModelLoading(string checkpointDir, torch.Device device, List<AudioData> data)
+    {
+        string checkpointPath = Path.Combine(checkpointDir, "DCCRN_epoch1.dat");
+        if (!File.Exists(checkpointPath))
+        {
+            Console.WriteLine("Checkpoint not found!");
+            return;
+        }
+        Console.WriteLine($"Checkpoint saved at: {checkpointPath}");
+
+        // Load into fresh model and run inference on first sample
+        var loadedModel = new DCCRNModel(device);
+        loadedModel.to(torch.CPU); // ensure load on CPU
+        loadedModel.load(checkpointPath);
+        loadedModel.to(device);
+        var sample = data.First();
+        float[] noisy = AudioUtils.ReadMonoWav(sample.NoisyPath, out int sr);
+        var denoised = loadedModel.Process(noisy, sr);
+
+        Console.WriteLine($"Denoised sample length: {denoised.Length}");
+    }
+
+    private static void Inference()
+    {
         string fileName = "test_audio.csv";
 
         MLContext mlContext = new MLContext();
-
 
         // Загружаем CSV через ML.NET
         IDataView dataView = mlContext.Data.LoadFromTextFile<AudioData>(
@@ -28,7 +74,8 @@ internal static class Program
 
         List<INoiseReductionModel> models = 
         [
-            new FourierNoiseReductionModel()
+            new FourierNoiseReductionModel(),
+            new DCCRNModel(torch.cuda.is_available() ? torch.CUDA : torch.CPU)
         ];
 
         List<IMetric> metrics =

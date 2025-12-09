@@ -18,6 +18,8 @@
       <PackageReference Include="Plotly.NET.CSharp" Version="0.13.0" />
       <PackageReference Include="ScottPlot" Version="5.1.57" />
       <PackageReference Include="shellprogressbar" Version="5.2.0" />
+      <PackageReference Include="TorchSharp" Version="0.105.1" />
+      <PackageReference Include="TorchSharp-cuda-windows" Version="0.105.1" />
     </ItemGroup>
 
 </Project>
