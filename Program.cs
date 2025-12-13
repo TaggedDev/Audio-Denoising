@@ -23,8 +23,6 @@ internal static class Program
 
         IDataView testDataView = mlContext.Data.LoadFromTextFile<AudioData>(testAudio, separatorChar: ',', hasHeader: true);
         List<AudioData> testData = mlContext.Data.CreateEnumerable<AudioData>(testDataView, reuseRowObject: false).ToList();
-
-        List<AudioData> trainSlice = trainData.Take(16).ToList();
         
         torch.Device device = torch.cuda.is_available() ? torch.CUDA : torch.CPU;
         DCCRNModel model = new DCCRNModel(device);
@@ -38,9 +36,7 @@ internal static class Program
         DCCRNTrainer trainer = new DCCRNTrainer(model, device, metrics, nFft: 512, winLength: 512, hopLength: 128);
         
         Directory.CreateDirectory(checkpointDir);
-        trainer.Run(trainSlice, testData, checkpointDir, epochs: 5, batchSize: 4, lr: 1e-3);
-
-        TestModelLoading(checkpointDir, device, trainData);
+        trainer.Run(trainData, testData, checkpointDir, epochs: 5, batchSize: 12, lr: 1e-3);
     }
 
     private static void TestModelLoading(string checkpointDir, torch.Device device, List<AudioData> data)

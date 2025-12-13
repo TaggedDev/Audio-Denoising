@@ -2,6 +2,7 @@
 using AudioDenoise.Metrics;
 using AudioDenoise.Models;
 using AudioDenoise.Utils;
+using ShellProgressBar;
 using TorchSharp;
 using TorchSharp.Modules;
 using static TorchSharp.torch;
@@ -25,7 +26,7 @@ public class DCCRNTrainer(
     /// Returns trained model (same instance).
     /// </summary>
     public void Run(IEnumerable<AudioData> trainDataset, IEnumerable<AudioData> testDataset, string? checkpointDir,
-        int epochs = 10, int batchSize = 8, double lr = 1e-3, bool trainShuffle = true, int saveEveryEpoch = 5)
+        int epochs = 10, int batchSize = 32, double lr = 1e-3, bool trainShuffle = true, int saveEveryEpoch = 5)
     {
         ArgumentNullException.ThrowIfNull(trainDataset);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
@@ -38,9 +39,8 @@ public class DCCRNTrainer(
 
         for (int epoch = 1; epoch <= epochs; epoch++)
         {
-            Console.WriteLine($"Epoch {epoch}/{epochs}");
             TrainModel(batchSize, trainShuffle, dataList, window, opt, epoch);
-            TestWithMetrics(testDataset, epoch);
+            //TestWithMetrics(testDataset, batchSize);
 
             // optional checkpoint
             if (string.IsNullOrEmpty(checkpointDir) || epoch % saveEveryEpoch == 0)
@@ -53,15 +53,28 @@ public class DCCRNTrainer(
         }
     }
 
-    private void TrainModel(int batchSize, bool trainShuffle, List<AudioData> trainData, Tensor window, Adam opt, int epoch)
+    private void TrainModel(int batchSize, bool trainShuffle, List<AudioData> trainData, Tensor window, Adam opt,
+        int epoch)
     {
         if (trainShuffle)
         {
             var rnd = new Random();
             trainData = trainData.OrderBy(_ => rnd.Next()).ToList();
         }
-
+        
+        var progressOptions = new ProgressBarOptions
+        {
+            ProgressCharacter = '─',
+            ProgressBarOnBottom = true,
+            ForegroundColor = ConsoleColor.DarkRed,
+            BackgroundColor = ConsoleColor.DarkGray,
+            DisplayTimeInRealTime = true,
+            CollapseWhenFinished = false
+        };
+        
         int totalBatches = (int)Math.Ceiling((double)trainData.Count / batchSize);
+        using var pbar = new ProgressBar(totalBatches, "Testing model…", progressOptions);
+        
         for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
         {
             List<AudioData> batchItems = trainData.Skip(batchIndex * batchSize).Take(batchSize).ToList();
@@ -111,7 +124,7 @@ public class DCCRNTrainer(
             loss.backward();
             opt.step();
 
-            Console.WriteLine($"Epoch {epoch} Batch {batchIndex + 1}/{totalBatches} Loss: {loss.ToSingle():F6}");
+            pbar.Tick($"Epoch {epoch} Batch {batchIndex + 1}/{totalBatches} Loss: {loss.ToSingle():F6}");
         }
     }
 
@@ -119,22 +132,33 @@ public class DCCRNTrainer(
     /// Evaluate the model on a dataset with batching (no shuffling) and print batch-wise metrics.
     /// Uses a list of IMetric objects to compute aggregated scores per batch.
     /// </summary>
-    public void TestWithMetrics(IEnumerable<AudioData> dataset, int batchSize = 8)
+    private void TestWithMetrics(IEnumerable<AudioData> testSet, int batchSize)
     {
-        ArgumentNullException.ThrowIfNull(dataset);
+        ArgumentNullException.ThrowIfNull(testSet);
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
 
-        List<AudioData> dataList = dataset.ToList();
+        List<AudioData> testList = testSet.ToList();
         Tensor window = hann_window(winLength, dtype: ScalarType.Float32, device: CPU);
 
         _model.eval(); // evaluation mode
-
-        int totalBatches = (int)Math.Ceiling((double)dataList.Count / batchSize);
-
-        for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
+        
+        var progressOptions = new ProgressBarOptions
         {
-            List<AudioData> batchItems = dataList.Skip(batchIndex * batchSize).Take(batchSize).ToList();
+            ProgressCharacter = '─',
+            ProgressBarOnBottom = true,
+            ForegroundColor = ConsoleColor.Cyan,
+            BackgroundColor = ConsoleColor.DarkGray,
+            DisplayTimeInRealTime = true,
+            CollapseWhenFinished = false
+        };
+        
+        int total = (int)Math.Ceiling((double)testList.Count / batchSize);
+        using var pbar = new ProgressBar(total, "Testing model…", progressOptions);
+
+        for (int batchIndex = 0; batchIndex < total; batchIndex++)
+        {
+            List<AudioData> batchItems = testList.Skip(batchIndex * batchSize).Take(batchSize).ToList();
 
             // Read waveforms
             List<float[]> waveformsNoisy = [];
@@ -186,10 +210,8 @@ public class DCCRNTrainer(
                 double avg = values.Average();
                 return $"{metric.Name}: {avg:F4}";
             }));
-
-            Console.WriteLine(
-                $"Test Batch {batchIndex + 1}/{totalBatches} | Loss: {mseLoss:F6} | {metricsStr}"
-            );
+            
+            pbar.Tick($"Test Batch {batchIndex + 1}/{total} | Loss: {mseLoss:F6} | {metricsStr}");
         }
     }
 
@@ -197,20 +219,16 @@ public class DCCRNTrainer(
     /// Convert list of waveforms (float[]) to batched complex spectrogram tensor [B,2,F,T]
     /// window expected on CPU; returned tensor is moved to toDevice.
     /// </summary>
-    private Tensor BatchWaveformsToSpec(List<float[]> waveforms, Tensor window, Device? toDevice = null)
+    private Tensor BatchWaveformsToSpec(List<float[]> waveforms, Tensor window, Device toDevice)
     {
-        Device cpu = CPU;
         Tensor[] tensors = new Tensor[waveforms.Count];
         for (int i = 0; i < waveforms.Count; i++) 
-            tensors[i] = tensor(waveforms[i], dtype: ScalarType.Float32, device: cpu);
+            tensors[i] = tensor(waveforms[i], dtype: ScalarType.Float32, device: toDevice);
         Tensor batched = stack(tensors); // [B, N] on CPU
 
-        Tensor spec = stft(batched, nFft, hopLength, winLength, window: window, center: true, return_complex: false);
-        Tensor specPerm = spec.permute(0, 3, 1, 2);
-
-        if (toDevice != null)
-            specPerm = specPerm.to(toDevice);
-
-        return specPerm;
+        window = window.to(toDevice);
+        Tensor spec = stft(batched, nFft, hopLength, winLength, window: window, center: true, 
+            return_complex: false);
+        return spec.permute(0, 3, 1, 2).to(toDevice);
     }
 }
