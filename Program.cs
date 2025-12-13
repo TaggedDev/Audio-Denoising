@@ -14,7 +14,7 @@ internal static class Program
     private static void Main()
     {
         const string trainAudio = "train_audio.csv";
-        const string testAudio = "train_audio.csv";
+        const string testAudio = "test_audio.csv";
         const string checkpointDir = "checkpoints_test";
         
         MLContext mlContext = new MLContext();
@@ -36,7 +36,7 @@ internal static class Program
         DCCRNTrainer trainer = new DCCRNTrainer(model, device, metrics, nFft: 512, winLength: 512, hopLength: 128);
         
         Directory.CreateDirectory(checkpointDir);
-        trainer.Run(trainData, testData, checkpointDir, epochs: 5, batchSize: 12, lr: 1e-3);
+        trainer.Run(trainData, testData, checkpointDir, epochs: 3, batchSize: 6, lr: 1e-3);
     }
 
     private static void TestModelLoading(string checkpointDir, torch.Device device, List<AudioData> data)

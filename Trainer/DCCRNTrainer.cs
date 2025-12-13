@@ -25,8 +25,8 @@ public class DCCRNTrainer(
     /// lossType: MSE
     /// Returns trained model (same instance).
     /// </summary>
-    public void Run(IEnumerable<AudioData> trainDataset, IEnumerable<AudioData> testDataset, string? checkpointDir,
-        int epochs = 10, int batchSize = 32, double lr = 1e-3, bool trainShuffle = true, int saveEveryEpoch = 5)
+    public void Run(IEnumerable<AudioData> trainDataset, IEnumerable<AudioData> testDataset, string checkpointDir,
+        int epochs = 10, int batchSize = 32, double lr = 1e-3, bool trainShuffle = true)
     {
         ArgumentNullException.ThrowIfNull(trainDataset);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
@@ -40,16 +40,7 @@ public class DCCRNTrainer(
         for (int epoch = 1; epoch <= epochs; epoch++)
         {
             TrainModel(batchSize, trainShuffle, dataList, window, opt, epoch);
-            //TestWithMetrics(testDataset, batchSize);
-
-            // optional checkpoint
-            if (string.IsNullOrEmpty(checkpointDir) || epoch % saveEveryEpoch == 0)
-                continue;
-            
-            Directory.CreateDirectory(checkpointDir);
-            string checkPoint = Path.Combine(checkpointDir, $"DCCRN_epoch{epoch}.dat");
-            _model.save(checkPoint);
-            Console.WriteLine($"Saved checkpoint: {checkPoint}");
+            TestWithMetrics(testDataset, batchSize, checkpointDir, epoch.ToString());
         }
     }
 
@@ -77,54 +68,60 @@ public class DCCRNTrainer(
         
         for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
         {
-            List<AudioData> batchItems = trainData.Skip(batchIndex * batchSize).Take(batchSize).ToList();
-
-            // Read waveforms and sampleRates
-            List<float[]> waveformsNoisy = [];
-            List<float[]> waveformsClean = [];
-
-            foreach (var ad in batchItems)
+            try
             {
-                float[] noisy = AudioUtils.ReadMonoWav(ad.NoisyPath, out _);
-                float[] clean = AudioUtils.ReadMonoWav(ad.CleanPath, out _);
+                List<AudioData> batchItems = trainData.Skip(batchIndex * batchSize).Take(batchSize).ToList();
 
-                waveformsNoisy.Add(noisy);
-                waveformsClean.Add(clean);
-            }
+                // Read waveforms and sampleRates
+                List<float[]> waveformsNoisy = [];
+                List<float[]> waveformsClean = [];
 
-            int maxLen = waveformsNoisy.Concat(waveformsClean).Max(x => x.Length);
-            for (int i = 0; i < waveformsNoisy.Count; i++)
-            {
-                float[] padded = new float[maxLen];
-                if (waveformsNoisy[i].Length < maxLen)
+                foreach (var ad in batchItems)
                 {
-                    Array.Copy(waveformsNoisy[i], padded, waveformsNoisy[i].Length);
-                    waveformsNoisy[i] = padded;
+                    float[] noisy = AudioUtils.ReadMonoWav(ad.NoisyPath, out _);
+                    float[] clean = AudioUtils.ReadMonoWav(ad.CleanPath, out _);
+
+                    waveformsNoisy.Add(noisy);
+                    waveformsClean.Add(clean);
                 }
 
-                if (waveformsClean[i].Length >= maxLen)
-                    continue;
+                int maxLen = waveformsNoisy.Concat(waveformsClean).Max(x => x.Length);
+                for (int i = 0; i < waveformsNoisy.Count; i++)
+                {
+                    float[] padded = new float[maxLen];
+                    if (waveformsNoisy[i].Length < maxLen)
+                    {
+                        Array.Copy(waveformsNoisy[i], padded, waveformsNoisy[i].Length);
+                        waveformsNoisy[i] = padded;
+                    }
 
-                Array.Copy(waveformsClean[i], padded, waveformsClean[i].Length);
-                waveformsClean[i] = padded;
+                    if (waveformsClean[i].Length >= maxLen)
+                        continue;
+
+                    Array.Copy(waveformsClean[i], padded, waveformsClean[i].Length);
+                    waveformsClean[i] = padded;
+                }
+
+
+                // Build batch spectrograms [B,2,F,T]
+                Tensor noisySpecB = BatchWaveformsToSpec(waveformsNoisy, window, toDevice: device);
+                Tensor cleanSpecB = BatchWaveformsToSpec(waveformsClean, window, toDevice: device);
+
+                // Train step
+                _model.train();
+                opt.zero_grad();
+
+                // forward
+                Tensor estSpecB = _model.forward(noisySpecB); // expects [B,2,F,T]
+                Tensor loss = nn.functional.mse_loss(estSpecB, cleanSpecB);
+                loss.backward();
+                opt.step();
+                pbar.Tick($"Epoch {epoch} Batch {batchIndex + 1}/{totalBatches} Loss: {loss.ToSingle():F6}");
             }
-
-
-            // Build batch spectrograms [B,2,F,T]
-            Tensor noisySpecB = BatchWaveformsToSpec(waveformsNoisy, window, toDevice: device);
-            Tensor cleanSpecB = BatchWaveformsToSpec(waveformsClean, window, toDevice: device);
-
-            // Train step
-            _model.train();
-            opt.zero_grad();
-
-            // forward
-            Tensor estSpecB = _model.forward(noisySpecB); // expects [B,2,F,T]
-            Tensor loss = nn.functional.mse_loss(estSpecB, cleanSpecB);
-            loss.backward();
-            opt.step();
-
-            pbar.Tick($"Epoch {epoch} Batch {batchIndex + 1}/{totalBatches} Loss: {loss.ToSingle():F6}");
+            catch (Exception e)
+            {
+                pbar.Tick($"Epoch {epoch} Batch {batchIndex + 1}/{totalBatches} Corrupted file {batchIndex * batchSize}+{batchSize}");
+            }
         }
     }
 
@@ -132,7 +129,7 @@ public class DCCRNTrainer(
     /// Evaluate the model on a dataset with batching (no shuffling) and print batch-wise metrics.
     /// Uses a list of IMetric objects to compute aggregated scores per batch.
     /// </summary>
-    private void TestWithMetrics(IEnumerable<AudioData> testSet, int batchSize)
+    private void TestWithMetrics(IEnumerable<AudioData> testSet, int batchSize, string checkpointDir, string epoch)
     {
         ArgumentNullException.ThrowIfNull(testSet);
         ArgumentNullException.ThrowIfNull(metrics);
@@ -142,6 +139,7 @@ public class DCCRNTrainer(
         Tensor window = hann_window(winLength, dtype: ScalarType.Float32, device: CPU);
 
         _model.eval(); // evaluation mode
+        string metricsStr = "";
         
         var progressOptions = new ProgressBarOptions
         {
@@ -199,7 +197,7 @@ public class DCCRNTrainer(
             }
 
             // Compute metrics per batch
-            string metricsStr = string.Join(" | ", metrics.Select(metric =>
+            metricsStr = string.Join(" | ", metrics.Select(metric =>
             {
                 // Compute metric for each sample in batch
                 IEnumerable<double> values = batchItems.Select((_, idx) =>
@@ -210,25 +208,54 @@ public class DCCRNTrainer(
                 double avg = values.Average();
                 return $"{metric.Name}: {avg:F4}";
             }));
-            
+
             pbar.Tick($"Test Batch {batchIndex + 1}/{total} | Loss: {mseLoss:F6} | {metricsStr}");
         }
+        
+        string checkPoint = Path.Combine(checkpointDir, $"DCCRN_epoch{epoch}.dat");
+        _model.save(checkPoint);
+        pbar.WriteLine($"Test (epoch {epoch}) finished. File saved to {checkPoint}. Results: {metricsStr}");
     }
 
     /// <summary>
-    /// Convert list of waveforms (float[]) to batched complex spectrogram tensor [B,2,F,T]
-    /// window expected on CPU; returned tensor is moved to toDevice.
+    /// Convert a list of waveforms (float[]) to batched complex spectrogram tensor [B,2,F,T].
+    /// STFT is performed on CPU to avoid TorchSharp GPU crashes. 
+    /// The returned tensor is moved to the specified device (CPU or GPU).
     /// </summary>
     private Tensor BatchWaveformsToSpec(List<float[]> waveforms, Tensor window, Device toDevice)
     {
-        Tensor[] tensors = new Tensor[waveforms.Count];
-        for (int i = 0; i < waveforms.Count; i++) 
-            tensors[i] = tensor(waveforms[i], dtype: ScalarType.Float32, device: toDevice);
+        int batchSize = waveforms.Count;
+        int maxLen = waveforms.Max(w => w.Length);
+
+        float[][] paddedWaveforms = new float[batchSize][];
+        for (int i = 0; i < batchSize; i++)
+        {
+            paddedWaveforms[i] = new float[maxLen];
+            Array.Copy(waveforms[i], paddedWaveforms[i], waveforms[i].Length);
+        }
+
+        // Create CPU tensor [B, N]
+        Tensor[] tensors = new Tensor[batchSize];
+        for (int i = 0; i < batchSize; i++)
+            tensors[i] = tensor(paddedWaveforms[i], dtype: ScalarType.Float32, device: CPU);
+
         Tensor batched = stack(tensors); // [B, N] on CPU
 
-        window = window.to(toDevice);
-        Tensor spec = stft(batched, nFft, hopLength, winLength, window: window, center: true, 
-            return_complex: false);
+        // Ensure window is on CPU
+        Tensor cpuWindow = window.to(CPU);
+
+        // STFT on CPU
+        Tensor spec = stft(
+            batched,
+            n_fft: nFft,
+            hop_length: hopLength,
+            win_length: winLength,
+            window: cpuWindow,
+            center: true,
+            return_complex: false // real + imaginary
+        );
+
+        // Permute to [B,2,F,T] and move to target device
         return spec.permute(0, 3, 1, 2).to(toDevice);
     }
 }
