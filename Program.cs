@@ -13,24 +13,34 @@ internal static class Program
 {
     private static void Main()
     {
-        const string csvPath = "train_audio.csv";
+        const string trainAudio = "train_audio.csv";
+        const string testAudio = "train_audio.csv";
         const string checkpointDir = "checkpoints_test";
         
         MLContext mlContext = new MLContext();
-        IDataView dataView = mlContext.Data.LoadFromTextFile<AudioData>(csvPath, separatorChar: ',', hasHeader: true);
-        List<AudioData> data = mlContext.Data.CreateEnumerable<AudioData>(dataView, reuseRowObject: false).ToList();
+        IDataView trainDataView = mlContext.Data.LoadFromTextFile<AudioData>(trainAudio, separatorChar: ',', hasHeader: true);
+        List<AudioData> trainData = mlContext.Data.CreateEnumerable<AudioData>(trainDataView, reuseRowObject: false).ToList();
 
-        // Take small subset to test batch training
-        List<AudioData> trainSlice = data.Take(16).ToList();
+        IDataView testDataView = mlContext.Data.LoadFromTextFile<AudioData>(testAudio, separatorChar: ',', hasHeader: true);
+        List<AudioData> testData = mlContext.Data.CreateEnumerable<AudioData>(testDataView, reuseRowObject: false).ToList();
+
+        List<AudioData> trainSlice = trainData.Take(16).ToList();
         
         torch.Device device = torch.cuda.is_available() ? torch.CUDA : torch.CPU;
         DCCRNModel model = new DCCRNModel(device);
-        DCCRNTrainer trainer = new DCCRNTrainer(model, device, nFft: 512, winLength: 512, hopLength: 128);
+        List<IMetric> metrics =
+        [
+            new SISDRMetric(),
+            new SNRMetric(),
+            new SegmentalSNR(),
+            new SpectralRMSE()
+        ];
+        DCCRNTrainer trainer = new DCCRNTrainer(model, device, metrics, nFft: 512, winLength: 512, hopLength: 128);
         
         Directory.CreateDirectory(checkpointDir);
-        trainer.Train(trainSlice, checkpointDir, epochs: 1, batchSize: 4, lr: 1e-3);
+        trainer.Run(trainSlice, testData, checkpointDir, epochs: 5, batchSize: 4, lr: 1e-3);
 
-        TestModelLoading(checkpointDir, device, data);
+        TestModelLoading(checkpointDir, device, trainData);
     }
 
     private static void TestModelLoading(string checkpointDir, torch.Device device, List<AudioData> data)

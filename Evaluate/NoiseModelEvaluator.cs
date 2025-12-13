@@ -1,8 +1,11 @@
 ﻿using AudioDenoise.Data;
 using AudioDenoise.Metrics;
 using AudioDenoise.Models;
+using AudioDenoise.Trainer;
 using AudioDenoise.Utils;
 using ShellProgressBar;
+using TorchSharp;
+using static TorchSharp.torch;
 
 namespace AudioDenoise.Evaluate;
 
@@ -21,7 +24,7 @@ public class NoiseModelEvaluator(IEnumerable<INoiseReductionModel> models, IEnum
     public List<ModelTestResult> RunTest(List<AudioData> noisyData, int batchSize = 8)
     {
         List<ModelTestResult> results = [];
-        
+
         int total = noisyData.Count;
 
         var progressOptions = new ProgressBarOptions
@@ -54,7 +57,7 @@ public class NoiseModelEvaluator(IEnumerable<INoiseReductionModel> models, IEnum
 
                 int length = Math.Min(cleanSignal.Length, noisySignal.Length);
                 float[] reference = cleanSignal.Take(length).ToArray();
-                
+
                 foreach (var model in _models)
                 {
                     float[] denoised = modelOutputs[model.Name].Take(length).ToArray();
@@ -88,15 +91,15 @@ public class NoiseModelEvaluator(IEnumerable<INoiseReductionModel> models, IEnum
                         group => group.Average(m => m.Value)
                     )
             });
-        
+
         aggregatedResults.AddRange(modelNoiseGroups);
-    
+
         // 2. Для каждой модели по всем типам шума (общий результат по модели)
         var modelGroups = results
             .GroupBy(r => r.ModelName)
             .Select(g => new ModelTestResult
             {
-                ModelName = g.Key, 
+                ModelName = g.Key,
                 NoiseType = "All",
                 Metrics = g.SelectMany(r => r.Metrics)
                     .GroupBy(m => m.Key)
@@ -105,7 +108,7 @@ public class NoiseModelEvaluator(IEnumerable<INoiseReductionModel> models, IEnum
                         group => group.Average(m => m.Value)
                     )
             });
-    
+
         aggregatedResults.AddRange(modelGroups);
         return aggregatedResults;
     }

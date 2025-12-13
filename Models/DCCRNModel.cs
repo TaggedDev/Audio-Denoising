@@ -292,17 +292,17 @@ public class DCCRNModel : nn.Module<Tensor, Tensor>, INoiseReductionModel
     /// <summary>
     /// Convert estimated complex spec Tensor [1,2,F,T] -> waveform float[] of required length.
     /// </summary>
-    private float[] SpectrogramToWaveform(Tensor complexSpec, int desiredLength)
+    public float[] SpectrogramToWaveform(Tensor complexSpec, int desiredLength)
     {
-        // complexSpec: [B,2,F,T]
-        // prepare back to [B, F, T, 2] for torch.istft
-        Tensor specPerm = complexSpec.permute(0, 2, 3, 1); // [B, F, T, 2]
+        // complexSpec: [B,2,F,T] on some device
+        Tensor specPerm = complexSpec.permute(0, 2, 3, 1).contiguous(); // [B, F, T, 2]
+        Tensor complexTensor = view_as_complex(specPerm);
 
-        // create Hann window
-        Tensor window = hann_window(_winLength, dtype: ScalarType.Float32);
+        // Hann window on same device as complex tensor
+        Tensor window = hann_window(_winLength, dtype: ScalarType.Float32, device: complexTensor.device);
 
-        // note: torch.istft returns [B, N]
-        Tensor waveform = istft(specPerm,
+        Tensor waveform = istft(
+            complexTensor,
             _nFft,
             _hopLength,
             _winLength,
@@ -310,10 +310,9 @@ public class DCCRNModel : nn.Module<Tensor, Tensor>, INoiseReductionModel
             center: true,
             normalized: false,
             length: desiredLength,
-            return_complex: false);
+            return_complex: false
+        );
 
-        // waveform shape [B, N]
-        Tensor wavCpu = waveform.to(CPU);
-        return wavCpu.data<float>().ToArray(); 
+        return waveform.to(CPU).data<float>().ToArray();
     }
 }
